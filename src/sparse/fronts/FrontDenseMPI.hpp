@@ -44,6 +44,7 @@ namespace strumpack {
   namespace BLR {
     template<typename scalar_t> class BLRMatrixMPI;
   }
+  namespace trsmnarrow { class Comms; }
 
   template<typename scalar_t,typename integer_t>
   class FrontDenseMPI : public FrontMPI<scalar_t,integer_t> {
@@ -131,6 +132,11 @@ namespace strumpack {
     // right-hand side in the forward solve, built at the first solve
     // after each factorization
     mutable LaswpPlan laswp_plan_;
+
+    // row and column communicators of the grid, for the triangular
+    // solves with narrow right-hand sides
+    mutable std::shared_ptr<trsmnarrow::Comms> trsm_comms_;
+    bool trsm_narrow(UpLo ul, Diag d, const DistM_t& A, DistM_t& B) const;
 
     void build_front(const SpMat_t& A);
     ReturnCode partial_factorization(const SPOptions<scalar_t>& opts);

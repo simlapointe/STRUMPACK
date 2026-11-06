@@ -31,6 +31,7 @@
 #include "FrontDenseMPI.hpp"
 #include "FrontBLRMPI.hpp"
 #include "ExtendAdd.hpp"
+#include "dense/DistTrsmNarrow.hpp"
 #include "BLR/BLRExtendAdd.hpp"
 
 namespace strumpack {
@@ -306,6 +307,29 @@ namespace strumpack {
   }
 #endif
 
+  template<typename scalar_t,typename integer_t> bool
+  FrontDenseMPI<scalar_t,integer_t>::trsm_narrow
+  (UpLo ul, Diag d, const DistM_t& A, DistM_t& B) const {
+    // PxTRSM with fewer messages for the narrow right-hand sides of
+    // the solve phase, see dense/DistTrsmNarrow.hpp
+    const auto g = A.grid();
+    const int m = B.rows(), n = B.cols(), nb = B.MB();
+    if (g != grid() || !g->active() || A.rows() != m || A.cols() != m ||
+        A.ctxt() != B.ctxt() || A.I() != 1 || A.J() != 1 ||
+        B.I() != 1 || B.J() != 1 || A.MB() != nb || A.NB() != nb ||
+        B.NB() != nb || A.desc()[6] || A.desc()[7] || B.desc()[6] ||
+        B.desc()[7] ||
+        !trsmnarrow::applicable(m, n, nb, g->nprows(), g->npcols()))
+      return false;
+    if (!trsm_comms_)
+      trsm_comms_ = std::make_shared<trsmnarrow::Comms>
+        (g->Comm_active().comm(), g->nprows(), g->npcols(),
+         g->prow(), g->pcol());
+    trsm_comms_->solve(ul == UpLo::U, d == Diag::U, m, n, nb, A.data(),
+                       A.desc()[8], B.data(), B.desc()[8]);
+    return true;
+  }
+
   template<typename scalar_t,typename integer_t> void
   FrontDenseMPI<scalar_t,integer_t>::fwd_solve_phase2
   (const DistM_t& F11, const DistM_t& F12, const DistM_t& F21,
@@ -343,7 +367,8 @@ namespace strumpack {
         if (this->dim_upd())
           gemv(Trans::N, scalar_t(-1.), F21, b, scalar_t(1.), bupd);
       } else {
-        trsm(Side::L, UpLo::L, Trans::N, Diag::U, scalar_t(1.), F11, b);
+        if (!trsm_narrow(UpLo::L, Diag::U, F11, b))
+          trsm(Side::L, UpLo::L, Trans::N, Diag::U, scalar_t(1.), F11, b);
         if (this->dim_upd())
           gemm(Trans::N, Trans::N, scalar_t(-1.), F21, b, scalar_t(1.), bupd);
       }
@@ -412,7 +437,8 @@ namespace strumpack {
       } else {
         if (this->dim_upd())
           gemm(Trans::N, Trans::N, scalar_t(-1.), F12, yupd, scalar_t(1.), y);
-        trsm(Side::L, UpLo::U, Trans::N, Diag::N, scalar_t(1.), F11, y);
+        if (!trsm_narrow(UpLo::U, Diag::N, F11, y))
+          trsm(Side::L, UpLo::U, Trans::N, Diag::N, scalar_t(1.), F11, y);
       }
     }
 #endif
